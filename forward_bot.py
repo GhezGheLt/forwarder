@@ -12,23 +12,27 @@ destination_channel = -1002293369181
 @app.on_message(filters.chat(source_channel))
 async def forward_and_edit_caption(client, message):
     try:
-        original_caption = message.caption or ""
+        if message.text:
+            original_caption = message.text
+        else:
+            original_caption = message.caption or ""
+
         first_line = original_caption.split('\n')[0] if original_caption else ""
 
         new_caption = (
             f"{first_line}\n\n"
             "enjoy hot webcams👙👇\n\n"
-            "[**CamHot 🔥**](https://t.me/+qY4VEKbgX0cxMmEy)"
+            "[CamHot 🔥](https://t.me/+qY4VEKbgX0cxMmEy)"
         )
 
         if message.photo:
-            client.send_photo(DESTINATION_CHANNEL_ID, photo=message.photo.file_id, caption=new_caption, parse_mode="Markdown")
+            await client.send_photo(destination_channel, photo=message.photo.file_id, caption=new_caption, parse_mode="Markdown")
         elif message.video:
-            client.send_video(DESTINATION_CHANNEL_ID, video=message.video.file_id, caption=new_caption, parse_mode="Markdown")
+            await client.send_video(destination_channel, video=message.video.file_id, caption=new_caption, parse_mode="Markdown")
         elif message.document:
-            client.send_document(DESTINATION_CHANNEL_ID, document=message.document.file_id, caption=new_caption, parse_mode="Markdown")
+            await client.send_document(destination_channel, document=message.document.file_id, caption=new_caption, parse_mode="Markdown")
         elif message.text:
-            client.send_message(DESTINATION_CHANNEL_ID, text=new_caption, parse_mode="Markdown")
+            await client.send_message(destination_channel, text=new_caption, parse_mode="Markdown")
         else:
             print("Unsupported message type.")
 
