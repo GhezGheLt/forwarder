@@ -1,3 +1,6 @@
+from keep_alive import keep_alive  # خط جدید برای سرور فیک
+keep_alive()  # اجرای سرور فیک برای زنده نگه داشتن اپ در Render
+
 from pyrogram import Client, filters
 
 api_id = 8891803
