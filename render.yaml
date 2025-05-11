@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: forward-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python forward_bot.py
+    plan: free
