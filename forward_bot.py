@@ -1,9 +1,9 @@
 import os
 import logging
+import asyncio
 from pyrogram import Client, filters
 from flask import Flask
 from waitress import serve
-import threading
 
 # تنظیمات لاگینگ
 logging.basicConfig(
@@ -12,15 +12,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# اعتبارسنجی متغیرها
-SOURCE_CHANNEL = int(os.getenv("SOURCE_CHANNEL"))
-DEST_CHANNEL = int(os.getenv("DEST_CHANNEL"))
+# اعتبارسنجی متغیرهای محیطی
+SOURCE_CHANNEL = int(os.getenv("SOURCE_CHANNEL", "-1001234567890"))
+DEST_CHANNEL = int(os.getenv("DEST_CHANNEL", "-1009876543210"))
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "ربات فعال است"
+    return "ربات فوروارد فعال است"
 
 # تنظیمات ربات
 bot = Client(
@@ -34,22 +34,28 @@ bot = Client(
 @bot.on_message(filters.chat(SOURCE_CHANNEL) & ~filters.service)
 async def forward_handler(client, message):
     try:
-        # لاگ محتوای پیام برای دیباگ
-        logger.info(f"پیام دریافتی: {message.id} | نوع: {message.media or 'text'}")
-
-        # فوروارد پیام
+        logger.info(f"دریافت پیام از کانال مبدأ: {message.id}")
         await message.copy(DEST_CHANNEL)
         logger.info(f"پیام {message.id} با موفقیت فوروارد شد")
-        
     except Exception as e:
-        logger.error(f"خطا در فوروارد: {str(e)}")
+        logger.error(f"خطا در فوروارد پیام: {str(e)}")
 
-def run_bot():
-    bot.run()
+async def run_bot():
+    await bot.start()
+    logger.info("ربات تلگرام راه‌اندازی شد")
+    await asyncio.Event().wait()  # اجرای نامحدود
+
+def start_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(run_bot())
 
 if __name__ == "__main__":
-    # راه‌اندازی ربات در ریسمان جداگانه
-    threading.Thread(target=run_bot, daemon=True).start()
+    # راه‌اندازی ربات در یک thread جداگانه
+    import threading
+    threading.Thread(target=start_bot, daemon=True).start()
     
-    # راه‌اندازی سرور
-    serve(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    # راه‌اندازی سرور Flask
+    PORT = int(os.getenv("PORT", 8080))
+    logger.info(f"سرور Flask در حال راه‌اندازی روی پورت {PORT}")
+    serve(app, host="0.0.0.0", port=PORT)
