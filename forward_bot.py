@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import time  # این خط اضافه شده
 from pyrogram import Client, filters
 from pyrogram.errors import PeerIdInvalid, ChannelInvalid, ChannelPrivate
 from flask import Flask
