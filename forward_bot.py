@@ -8,7 +8,7 @@ from waitress import serve
 import threading
 import time
 
-# تنظیمات پیشرفته لاگینگ
+# ======= تنظیمات پیشرفته لاگینگ =======
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -28,72 +28,101 @@ def home():
 
 @app.route('/health')
 def health_check():
-    return jsonify({"status": "active", "server": "Render", "timestamp": time.time()}), 200
+    return jsonify({
+        "status": "active",
+        "server": "Render",
+        "timestamp": time.time(),
+        "telegram_bot": "running" if bot.is_connected else "inactive"
+    }), 200
 
-# ======= سیستم Keep-Alive بهبود یافته =======
+# ======= سیستم Keep-Alive بهینه‌شده =======
 def keep_alive():
     while True:
         try:
-            # تنظیم timeout برای جلوگیری از hang شدن
             socket.setdefaulttimeout(10)
-            url = f"https://{os.getenv('RENDER_EXTERNAL_URL')}/health" if os.getenv('RENDER_EXTERNAL_URL') else "http://localhost:8080/health"
-            urllib.request.urlopen(url)
-            logger.info("Keep-Alive: درخواست سلامت ارسال شد")
+            port = int(os.getenv("PORT", 8080))
+            urllib.request.urlopen(f"http://localhost:{port}/health")
+            logger.debug("Keep-Alive: درخواست سلامت با موفقیت ارسال شد")
+        except urllib.error.URLError as e:
+            logger.warning(f"خطای موقت در Keep-Alive: {e.reason}")
         except Exception as e:
-            logger.error(f"Keep-Alive خطا: {str(e)}")
-        time.sleep(240)  # هر 4 دقیقه
+            logger.error(f"خطای ناشناخته در Keep-Alive: {str(e)}")
+        time.sleep(300)  # هر 5 دقیقه
 
 # ======= تنظیمات ربات تلگرام =======
 bot = Client(
-    "forward_bot",
+    name="forward_bot",
     api_id=int(os.getenv("API_ID")),
     api_hash=os.getenv("API_HASH"),
     bot_token=os.getenv("BOT_TOKEN"),
     in_memory=True,
-    workers=2
+    workers=4
 )
 
-@bot.on_message(filters.chat(int(os.getenv("SOURCE_CHANNEL"))))
+@bot.on_message(filters.chat(int(os.getenv("SOURCE_CHANNEL")) & ~filters.service)
 async def forward_and_edit_caption(client, message):
     try:
         dest_channel = int(os.getenv("DEST_CHANNEL"))
+        caption_template = "\n\n🔞 Enjoy hot webcams 👇\n\n🔥 CamHot: https://t.me/+qY4VEKbgX0cxMmEy"
         
-        # ساخت کپشن جدید طبق درخواست شما
-        caption_template = "\nenjoy hot webcams👙👇\n\nCamHot 🔥 (https://t.me/+qY4VEKbgX0cxMmEy)"
+        # پردازش کپشن
+        original_caption = message.caption or ""
+        first_line = original_caption.split('\n')[0] if original_caption else "🔞"
+        new_caption = f"{first_line}{caption_template}"[:1024]  # محدودیت تلگرام
         
-        if message.caption:
-            first_line = message.caption.split('\n')[0]
-            new_caption = f"{first_line}{caption_template}"
-        else:
-            new_caption = f"🔞{caption_template}"
-        
-        # ارسال پیام با کپشن تغییر یافته
+        # فوروارد محتوا
         if message.media:
             await message.copy(
-                dest_channel,
-                caption=new_caption[:1024]  # محدودیت کاراکتر تلگرام
+                chat_id=dest_channel,
+                caption=new_caption,
+                parse_mode="html"
             )
         elif message.text:
             await client.send_message(
-                dest_channel,
-                text=new_caption
+                chat_id=dest_channel,
+                text=new_caption,
+                disable_web_page_preview=True
             )
             
-        logger.info(f"پیام {message.id} با کپشن تغییر یافته ارسال شد")
-        
+        logger.info(f"پیام {message.id} با موفقیت فوروارد شد")
+
     except Exception as e:
-        logger.error(f"خطا در ارسال پیام: {str(e)}")
+        logger.error(f"خطا در فوروارد پیام: {str(e)}", exc_info=True)
+
+# ======= مدیریت خطاهای ربات =======
+@bot.on_error()
+async def error_handler(_, update, err):
+    logger.error(f"خطای ربات: {str(err)}", exc_info=True)
 
 # ======= راه‌اندازی سرویس‌ها =======
 if __name__ == "__main__":
-    # راه‌اندازی Keep-Alive در پس‌زمینه
-    threading.Thread(target=keep_alive, daemon=True).start()
+    # غیرفعال کردن Keep-Alive در محیط Render
+    if not os.getenv("RENDER"):
+        threading.Thread(target=keep_alive, daemon=True).start()
+        logger.info("سیستم Keep-Alive فعال شد")
     
-    # راه‌اندازی سرور Flask
+    # تنظیمات سرور
     PORT = int(os.getenv("PORT", 8080))
-    logger.info(f"سرور در حال راه‌اندازی روی پورت {PORT}")
-    serve(app, host="0.0.0.0", port=PORT)
+    HOST = "0.0.0.0"
     
-    # راه‌اندازی ربات تلگرام
-    logger.info("ربات تلگرام در حال راه‌اندازی...")
-    bot.run()
+    # راه‌اندازی همزمان ربات و سرور
+    try:
+        # راه‌اندازی ربات در تابع جداگانه
+        def run_bot():
+            bot.run()
+        
+        bot_thread = threading.Thread(target=run_bot, daemon=True)
+        bot_thread.start()
+        
+        logger.info(f"سرور Flask در حال راه‌اندازی روی {HOST}:{PORT}")
+        serve(
+            app,
+            host=HOST,
+            port=PORT,
+            threads=8,
+            channel_timeout=120
+        )
+    except KeyboardInterrupt:
+        logger.info("خاموش کردن سرویس...")
+    except Exception as e:
+        logger.critical(f"خطای بحرانی: {str(e)}", exc_info=True)
