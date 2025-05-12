@@ -1,75 +1,133 @@
 import os
 import logging
+import asyncio
 from pyrogram import Client, filters
+from pyrogram.errors import PeerIdInvalid, ChannelInvalid, ChannelPrivate
 from flask import Flask
 from waitress import serve
 import threading
+import time
 
-# تنظیمات لاگینگ
+# تنظیمات پیشرفته لاگینگ
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot.log'),
+        logging.FileHandler('debug.log'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# Flask App
+# اعتبارسنجی متغیرهای محیطی
+def validate_env():
+    required_vars = ["API_ID", "API_HASH", "BOT_TOKEN", "SOURCE_CHANNEL", "DEST_CHANNEL"]
+    missing = [var for var in required_vars if not os.getenv(var)]
+    if missing:
+        logger.error(f"متغیرهای محیطی ضروری وجود ندارد: {', '.join(missing)}")
+        exit(1)
+    
+    try:
+        return {
+            "api_id": int(os.getenv("API_ID")),
+            "api_hash": os.getenv("API_HASH"),
+            "bot_token": os.getenv("BOT_TOKEN"),
+            "source": int(os.getenv("SOURCE_CHANNEL")),
+            "dest": int(os.getenv("DEST_CHANNEL"))
+        }
+    except ValueError as e:
+        logger.error(f"خطا در مقادیر محیطی: {str(e)}")
+        exit(1)
+
+env = validate_env()
+
 app = Flask(__name__)
 
 @app.route('/health')
-def health_check():
+def health():
     return "OK", 200
 
-def run_server():
-    PORT = int(os.getenv("PORT", 8080))
-    serve(app, host="0.0.0.0", port=PORT)
+async def verify_channel_access(client, channel_id, channel_type="مقصد"):
+    """بررسی دسترسی به کانال"""
+    try:
+        chat = await client.get_chat(channel_id)
+        logger.info(f"کانال {channel_type} شناسایی شد: {chat.title} (ID: {chat.id})")
+        
+        me = await client.get_me()
+        member = await client.get_chat_member(channel_id, me.id)
+        
+        if channel_type == "مقصد" and not member.can_send_messages:
+            logger.error("ربات مجوز ارسال پیام در کانال مقصد را ندارد")
+            return False
+            
+        return True
+    except (ChannelInvalid, ChannelPrivate, PeerIdInvalid) as e:
+        logger.error(f"خطا در دسترسی به کانال {channel_type}: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"خطای ناشناخته در بررسی کانال {channel_type}: {str(e)}", exc_info=True)
+        return False
 
-# تنظیمات ربات
 bot = Client(
     "forward_bot",
-    api_id=int(os.getenv("API_ID")),
-    api_hash=os.getenv("API_HASH"),
-    bot_token=os.getenv("BOT_TOKEN"),
-    in_memory=True
+    api_id=env["api_id"],
+    api_hash=env["api_hash"],
+    bot_token=env["bot_token"],
+    in_memory=True,
+    workers=4
 )
 
-@bot.on_message(filters.chat(int(os.getenv("SOURCE_CHANNEL"))))
+@bot.on_message(filters.chat(env["source"]))
 async def handle_message(client, message):
     try:
-        dest_channel = int(os.getenv("DEST_CHANNEL"))
+        logger.debug(f"پیام دریافت شده از کانال مبدأ: {message.id}")
         
-        # ساخت کپشن جدید
-        if message.caption:
-            first_line = message.caption.split('\n')[0]
-            new_caption = f"{first_line}\nenjoy hot webcams👙👇\n\nCamHot 🔥 (https://t.me/+qY4VEKbgX0cxMmEy)"
-        else:
-            new_caption = "enjoy hot webcams👙👇\n\nCamHot 🔥 (https://t.me/+qY4VEKbgX0cxMmEy)"
-        
-        # ارسال پیام با کپشن تغییر یافته
-        if message.media:
-            await message.copy(
-                dest_channel,
-                caption=new_caption
-            )
-        elif message.text:
-            await client.send_message(
-                dest_channel,
-                text=new_caption
-            )
+        if message.empty:
+            logger.warning("پیام خالی دریافت شد")
+            return
             
-        logger.info(f"پیام {message.id} با موفقیت ارسال شد")
-        
+        await message.copy(env["dest"])
+        logger.info(f"پیام {message.id} با موفقیت به کانال مقصد ارسال شد")
     except Exception as e:
-        logger.error(f"خطا در ارسال پیام: {str(e)}")
+        logger.error(f"خطا در پردازش پیام: {str(e)}", exc_info=True)
+
+async def run_bot():
+    await bot.start()
+    logger.info("ربات تلگرام راه‌اندازی شد")
+    
+    if not await verify_channel_access(bot, env["source"], "مبدأ"):
+        logger.error("دسترسی به کانال مبدأ ناموفق بود")
+        await bot.stop()
+        return
+        
+    if not await verify_channel_access(bot, env["dest"], "مقصد"):
+        logger.error("دسترسی به کانال مقصد ناموفق بود")
+        await bot.stop()
+        return
+    
+    logger.info("ربات آماده دریافت و فوروارد پیام‌ها است")
+    await asyncio.Event().wait()
+
+def start_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(run_bot())
 
 if __name__ == "__main__":
-    # راه اندازی سرور در تابع جداگانه
-    server_thread = threading.Thread(target=run_server, daemon=True)
+    # راه‌اندازی سرور Flask
+    server_thread = threading.Thread(
+        target=lambda: serve(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080))),
+        daemon=True
+    )
     server_thread.start()
     
-    # راه اندازی ربات
-    logger.info("ربات در حال راه اندازی...")
-    bot.run()
+    # راه‌اندازی ربات
+    bot_thread = threading.Thread(target=start_bot, daemon=True)
+    bot_thread.start()
+    
+    # نگه داشتن برنامه در حال اجرا
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("دریافت سیگنال خاتمه...")
