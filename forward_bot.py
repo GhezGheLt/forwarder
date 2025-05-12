@@ -1,6 +1,7 @@
 import os
 import logging
 import urllib.request
+import socket
 from pyrogram import Client, filters
 from flask import Flask, jsonify
 from waitress import serve
@@ -29,11 +30,14 @@ def home():
 def health_check():
     return jsonify({"status": "active", "server": "Render", "timestamp": time.time()}), 200
 
-# ======= سیستم Keep-Alive داخلی =======
+# ======= سیستم Keep-Alive بهبود یافته =======
 def keep_alive():
     while True:
         try:
-            urllib.request.urlopen(f"https://{os.getenv('RENDER_EXTERNAL_URL', 'your-app-name.onrender.com')}/health")
+            # تنظیم timeout برای جلوگیری از hang شدن
+            socket.setdefaulttimeout(10)
+            url = f"https://{os.getenv('RENDER_EXTERNAL_URL')}/health" if os.getenv('RENDER_EXTERNAL_URL') else "http://localhost:8080/health"
+            urllib.request.urlopen(url)
             logger.info("Keep-Alive: درخواست سلامت ارسال شد")
         except Exception as e:
             logger.error(f"Keep-Alive خطا: {str(e)}")
@@ -55,17 +59,19 @@ async def forward_and_edit_caption(client, message):
         dest_channel = int(os.getenv("DEST_CHANNEL"))
         
         # ساخت کپشن جدید طبق درخواست شما
+        caption_template = "\nenjoy hot webcams👙👇\n\nCamHot 🔥 (https://t.me/+qY4VEKbgX0cxMmEy)"
+        
         if message.caption:
             first_line = message.caption.split('\n')[0]
-            new_caption = f"{first_line}\nenjoy hot webcams👙👇\n\nCamHot 🔥 (https://t.me/+qY4VEKbgX0cxMmEy)"
+            new_caption = f"{first_line}{caption_template}"
         else:
-            new_caption = "enjoy hot webcams👙👇\n\nCamHot 🔥 (https://t.me/+qY4VEKbgX0cxMmEy)"
+            new_caption = f"🔞{caption_template}"
         
         # ارسال پیام با کپشن تغییر یافته
         if message.media:
             await message.copy(
                 dest_channel,
-                caption=new_caption
+                caption=new_caption[:1024]  # محدودیت کاراکتر تلگرام
             )
         elif message.text:
             await client.send_message(
@@ -85,8 +91,9 @@ if __name__ == "__main__":
     
     # راه‌اندازی سرور Flask
     PORT = int(os.getenv("PORT", 8080))
+    logger.info(f"سرور در حال راه‌اندازی روی پورت {PORT}")
     serve(app, host="0.0.0.0", port=PORT)
     
     # راه‌اندازی ربات تلگرام
-    logger.info("ربات در حال راه‌اندازی...")
+    logger.info("ربات تلگرام در حال راه‌اندازی...")
     bot.run()
