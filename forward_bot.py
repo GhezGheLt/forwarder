@@ -1,11 +1,12 @@
 import os
 import logging
 from pyrogram import Client, filters
-from flask import Flask
+from flask import Flask, jsonify
 from waitress import serve
 import threading
+import time
 
-# تنظیمات لاگینگ
+# تنظیمات پیشرفته لاگینگ
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -16,32 +17,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Flask App
+# ======= بخش Flask برای مانیتورینگ =======
 app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "ربات فوروارد فعال است | <a href='/health'>بررسی سلامت</a>"
 
 @app.route('/health')
 def health_check():
-    return "OK", 200
+    return jsonify({"status": "active", "server": "Render", "timestamp": time.time()}), 200
 
-def run_server():
-    PORT = int(os.getenv("PORT", 8080))
-    serve(app, host="0.0.0.0", port=PORT)
+# ======= سیستم Keep-Alive داخلی =======
+def keep_alive():
+    while True:
+        try:
+            urllib.request.urlopen(f"https://{os.getenv('RENDER_EXTERNAL_URL', 'your-app-name.onrender.com')}/health")
+            logger.info("Keep-Alive: درخواست سلامت ارسال شد")
+        except Exception as e:
+            logger.error(f"Keep-Alive خطا: {str(e)}")
+        time.sleep(240)  # هر 4 دقیقه
 
-# تنظیمات ربات
+# ======= تنظیمات ربات تلگرام =======
 bot = Client(
     "forward_bot",
     api_id=int(os.getenv("API_ID")),
     api_hash=os.getenv("API_HASH"),
     bot_token=os.getenv("BOT_TOKEN"),
-    in_memory=True
+    in_memory=True,
+    workers=2
 )
 
 @bot.on_message(filters.chat(int(os.getenv("SOURCE_CHANNEL"))))
-async def handle_message(client, message):
+async def forward_and_edit_caption(client, message):
     try:
         dest_channel = int(os.getenv("DEST_CHANNEL"))
         
-        # ساخت کپشن جدید
+        # ساخت کپشن جدید طبق درخواست شما
         if message.caption:
             first_line = message.caption.split('\n')[0]
             new_caption = f"{first_line}\nenjoy hot webcams👙👇\n\nCamHot 🔥 (https://t.me/+qY4VEKbgX0cxMmEy)"
@@ -60,16 +72,20 @@ async def handle_message(client, message):
                 text=new_caption
             )
             
-        logger.info(f"پیام {message.id} با موفقیت ارسال شد")
+        logger.info(f"پیام {message.id} با کپشن تغییر یافته ارسال شد")
         
     except Exception as e:
         logger.error(f"خطا در ارسال پیام: {str(e)}")
 
+# ======= راه‌اندازی سرویس‌ها =======
 if __name__ == "__main__":
-    # راه اندازی سرور در تابع جداگانه
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
+    # راه‌اندازی Keep-Alive در پس‌زمینه
+    threading.Thread(target=keep_alive, daemon=True).start()
     
-    # راه اندازی ربات
-    logger.info("ربات در حال راه اندازی...")
+    # راه‌اندازی سرور Flask
+    PORT = int(os.getenv("PORT", 8080))
+    serve(app, host="0.0.0.0", port=PORT)
+    
+    # راه‌اندازی ربات تلگرام
+    logger.info("ربات در حال راه‌اندازی...")
     bot.run()
