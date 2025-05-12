@@ -18,32 +18,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ======= بخش Flask برای مانیتورینگ =======
+# ======= بخش Flask =======
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "ربات فوروارد فعال است | <a href='/health'>بررسی سلامت</a>"
+    return "ربات فعال است | <a href='/health'>بررسی سلامت</a>"
 
 @app.route('/health')
 def health_check():
-    return jsonify({
-        "status": "active",
-        "server": "Render",
-        "timestamp": time.time()
-    }), 200
+    return jsonify({"status": "active", "time": time.time()}), 200
 
-# ======= سیستم Keep-Alive داخلی =======
+# ======= سیستم Keep-Alive بهینه‌شده =======
 def keep_alive():
     while True:
         try:
-            urllib.request.urlopen(f"https://{os.getenv('RENDER_EXTERNAL_URL', 'forwarder-go16.onrender.com')}/health")
+            url = f"https://{os.getenv('RENDER_EXTERNAL_URL', 'forwarder-go16.onrender.com')}/health"
+            urllib.request.urlopen(url)
             logger.info("Keep-Alive: درخواست سلامت ارسال شد")
         except Exception as e:
             logger.error(f"Keep-Alive خطا: {str(e)}")
         time.sleep(240)  # هر 4 دقیقه
 
-# ======= تنظیمات ربات تلگرام =======
+# ======= تنظیمات ربات =======
 bot = Client(
     "forward_bot",
     api_id=int(os.getenv("API_ID")),
@@ -56,25 +53,21 @@ bot = Client(
 @bot.on_message(filters.chat(int(os.getenv("SOURCE_CHANNEL"))))
 async def forward_message(client, message):
     try:
-        await message.copy(int(os.getenv("DEST_CHANNEL")))
-        logger.info(f"پیام {message.id} با موفقیت فوروارد شد")
+        dest = int(os.getenv("DEST_CHANNEL", "-1002293369181"))  # مقدار پیش‌فرض
+        await message.copy(dest)
+        logger.info(f"پیام {message.id} با موفقیت ارسال شد")
     except Exception as e:
-        logger.error(f"خطا در فوروارد: {str(e)}")
+        logger.error(f"خطا در ارسال پیام: {str(e)}")
 
 # ======= راه‌اندازی سرویس‌ها =======
 if __name__ == "__main__":
-    # راه‌اندازی Keep-Alive در پس‌زمینه
+    # راه‌اندازی Keep-Alive
     threading.Thread(target=keep_alive, daemon=True).start()
     
-    # راه‌اندازی سرور Flask
+    # راه‌اندازی سرور
     PORT = int(os.getenv("PORT", 8080))
-    threading.Thread(
-        target=serve,
-        args=(app,),
-        kwargs={'host': '0.0.0.0', 'port': PORT},
-        daemon=True
-    ).start()
+    serve(app, host="0.0.0.0", port=PORT)
     
-    # راه‌اندازی ربات تلگرام
-    logger.info("در حال راه‌اندازی سرویس‌ها...")
+    # راه‌اندازی ربات
+    logger.info("ربات در حال راه‌اندازی...")
     bot.run()
