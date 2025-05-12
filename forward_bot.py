@@ -40,8 +40,20 @@ async def handle_message(client, message):
         if message.empty:
             logger.warning("پیام خالی دریافت شد")
             return
-            
-        await message.copy(dest)
+        
+        # پردازش کپشن
+        new_caption = ""
+        if message.caption:
+            # گرفتن خط اول کپشن قبلی
+            first_line = message.caption.split('\n')[0]
+            # ساخت کپشن جدید
+            new_caption = f"{first_line}\n\nenjoy hot webcams👙👇\n\nCamHot 🔥 ( https://t.me/+qY4VEKbgX0cxMmEy )"
+        
+        # ارسال پیام با کپشن جدید
+        await message.copy(
+            dest,
+            caption=new_caption if new_caption else None
+        )
         logger.info(f"پیام {message.id} با موفقیت ارسال شد")
     except Exception as e:
         logger.error(f"خطای بحرانی: {e}", exc_info=True)
