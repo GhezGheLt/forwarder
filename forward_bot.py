@@ -41,4 +41,7 @@ async def forward_and_edit_caption(client, message):
     except Exception as e:
         print("Error:", e)
 
+from keep_alive import keep_alive
+keep_alive()
+
 app.run()
