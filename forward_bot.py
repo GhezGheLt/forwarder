@@ -36,13 +36,13 @@ async def forward_and_edit_caption(client, message):
         )
 
         if message.photo:
-            await client.send_photo(DEST_CHANNEL, photo=message.photo.file_id, caption=new_caption, parse_mode="Markdown")
+            await client.send_photo(DEST_CHANNEL, photo=message.photo.file_id, caption=new_caption, parse_mode="markdown")
         elif message.video:
-            await client.send_video(DEST_CHANNEL, video=message.video.file_id, caption=new_caption, parse_mode="Markdown")
+            await client.send_video(DEST_CHANNEL, video=message.video.file_id, caption=new_caption, parse_mode="markdown")
         elif message.document:
-            await client.send_document(DEST_CHANNEL, document=message.document.file_id, caption=new_caption, parse_mode="Markdown")
+            await client.send_document(DEST_CHANNEL, document=message.document.file_id, caption=new_caption, parse_mode="markdown")
         elif message.text:
-            await client.send_message(DEST_CHANNEL, text=new_caption, parse_mode="Markdown")
+            await client.send_message(DEST_CHANNEL, text=new_caption, parse_mode="markdown")
         else:
             print("Message type not handled:", message)
 
