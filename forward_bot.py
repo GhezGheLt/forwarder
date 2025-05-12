@@ -2,8 +2,9 @@ from pyrogram import Client, filters
 from flask import Flask
 import os
 import threading
+from waitress import serve
 
-# --- Flask for Render keep-alive ---
+# Flask App
 app = Flask(__name__)
 
 @app.route('/')
@@ -11,37 +12,34 @@ def index():
     return "Bot is running!"
 
 def run_flask():
-    app.run(host="0.0.0.0", port=8080)
+    PORT = int(os.environ.get("PORT", 8080))
+    serve(app, host="0.0.0.0", port=PORT)
 
-threading.Thread(target=run_flask).start()
+# Start Flask in a thread
+threading.Thread(target=run_flask, daemon=True).start()
 
-# --- Environment Variables ---
+# Pyrogram Bot
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# --- Your Channel IDs ---
-SOURCE_CHANNEL = -1002650282186  # جایگزین با آیدی واقعی کانال مبدأ
-DEST_CHANNEL = -1002293369181    # جایگزین با آیدی واقعی کانال مقصد
+SOURCE_CHANNEL = -1002650282186
+DEST_CHANNEL = -1002293369181
 
-# --- Pyrogram Bot ---
 bot = Client("forward_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 @bot.on_message(filters.chat(SOURCE_CHANNEL))
 async def forward_or_copy(client, message):
-    print("Message received!")
+    print(f"New message: {message.id}")
     try:
         if message.forward_from_chat or message.forward_from:
             await message.forward(DEST_CHANNEL)
         elif message.text:
-            await client.send_message(chat_id=DEST_CHANNEL, text=message.text)
-        elif message.photo:
-            await client.send_photo(chat_id=DEST_CHANNEL, photo=message.photo.file_id, caption=message.caption)
-        elif message.video:
-            await client.send_video(chat_id=DEST_CHANNEL, video=message.video.file_id, caption=message.caption)
-        else:
-            print("Unsupported message type.")
+            await client.send_message(DEST_CHANNEL, text=message.text)
+        elif message.media:
+            await message.copy(DEST_CHANNEL)
     except Exception as e:
-        print(f"Error while forwarding message: {e}")
+        print(f"Error: {e}")
 
+print("Bot is starting...")
 bot.run()
