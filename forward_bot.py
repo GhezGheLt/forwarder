@@ -14,10 +14,10 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 # Flask App
-app = Flask(name)
+app = Flask(__name__)
 
 @app.route('/health')
 def health_check():
@@ -65,7 +65,7 @@ async def handle_message(client, message):
     except Exception as e:
         logger.error(f"خطا در ارسال پیام: {str(e)}")
 
-if name == "main":
+if __name__ == "__main__":
     # راه اندازی سرور در تابع جداگانه
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
