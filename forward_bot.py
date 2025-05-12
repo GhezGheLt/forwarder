@@ -52,18 +52,13 @@ async def verify_channel_access(client, channel_id, channel_type):
     try:
         chat = await client.get_chat(channel_id)
         logger.info(f"کانال {channel_type} شناسایی شد: {chat.title} (ID: {chat.id})")
-        
-        if channel_type == "مقصد":
-            me = await client.get_me()
-            member = await client.get_chat_member(channel_id, me.id)
-            if not member.can_send_messages:
-                logger.error(f"ربات مجوز ارسال پیام در کانال {channel_type} را ندارد")
-                return False
-        
         return True
     except (ChannelInvalid, ChannelPrivate, PeerIdInvalid) as e:
-        logger.error(f"ربات به کانال {channel_type} دسترسی ندارد یا عضو نیست. لطفاً ربات را به کانال اضافه کنید")
-        logger.error(f"خطای دقیق: {str(e)}")
+        logger.error(f"خطا: ربات به کانال {channel_type} دسترسی ندارد")
+        logger.error(f"لطفاً مطمئن شوید:")
+        logger.error(f"1. ربات @{client.me.username} به کانال اضافه شده است")
+        logger.error(f"2. شناسه کانال صحیح است: {channel_id}")
+        logger.error(f"3. ربات محدود نشده است")
         return False
     except Exception as e:
         logger.error(f"خطای ناشناخته در بررسی کانال {channel_type}: {str(e)}", exc_info=True)
@@ -82,56 +77,52 @@ bot = Client(
 async def handle_message(client, message):
     try:
         logger.debug(f"پیام دریافت شده از کانال مبدأ: {message.id}")
-        
-        if message.empty:
-            logger.warning("پیام خالی دریافت شد")
-            return
-            
         await message.copy(env["dest"])
-        logger.info(f"پیام {message.id} با موفقیت به کانال مقصد ارسال شد")
+        logger.info(f"پیام {message.id} با موفقیت ارسال شد")
     except Exception as e:
         logger.error(f"خطا در پردازش پیام: {str(e)}", exc_info=True)
 
 async def run_bot():
     try:
         await bot.start()
-        logger.info("ربات تلگرام راه‌اندازی شد")
+        logger.info(f"ربات فعال شد: @{bot.me.username}")
         
         if not await verify_channel_access(bot, env["source"], "مبدأ"):
-            logger.error("دسترسی به کانال مبدأ ناموفق بود")
             return
             
         if not await verify_channel_access(bot, env["dest"], "مقصد"):
-            logger.error("دسترسی به کانال مقصد ناموفق بود")
             return
-        
-        logger.info("ربات آماده دریافت و فوروارد پیام‌ها است")
+            
+        logger.info("آماده دریافت و فوروارد پیام‌ها...")
         await asyncio.Event().wait()
+        
     except Exception as e:
-        logger.error(f"خطای بحرانی در اجرای ربات: {str(e)}", exc_info=True)
+        logger.error(f"خطای بحرانی: {str(e)}", exc_info=True)
     finally:
-        await bot.stop()
+        if bot.is_connected:
+            await bot.stop()
 
 def start_bot():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_bot())
+    try:
+        loop.run_until_complete(run_bot())
+    finally:
+        loop.close()
 
 if __name__ == "__main__":
     # راه‌اندازی سرور Flask
-    server_thread = threading.Thread(
+    threading.Thread(
         target=lambda: serve(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080))),
         daemon=True
-    )
-    server_thread.start()
+    ).start()
     
     # راه‌اندازی ربات
-    bot_thread = threading.Thread(target=start_bot, daemon=True)
-    bot_thread.start()
+    threading.Thread(target=start_bot, daemon=True).start()
     
     # نگه داشتن برنامه در حال اجرا
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("دریافت سیگنال خاتمه...")
+        logger.info("خاتمه برنامه...")
