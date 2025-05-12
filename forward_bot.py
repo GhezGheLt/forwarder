@@ -9,14 +9,22 @@ api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
 bot_token = os.getenv("BOT_TOKEN")
 
-app = Client("forward_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
-
-# آیدی عددی کانال‌ها
 SOURCE_CHANNEL = int(os.getenv("SOURCE_CHANNEL"))
 DEST_CHANNEL = int(os.getenv("DEST_CHANNEL"))
 
-@app.on_message(filters.chat(SOURCE_CHANNEL))
+# بررسی مقدار متغیرها
+print("SOURCE_CHANNEL =", SOURCE_CHANNEL)
+print("DEST_CHANNEL =", DEST_CHANNEL)
+
+app = Client("forward_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
+
+@app.on_message(filters.channel)
 async def forward_and_edit_caption(client, message):
+    if message.chat.id != SOURCE_CHANNEL:
+        return
+
+    print("Message received!")  # تست دریافت پیام
+
     try:
         original_caption = message.caption or ""
         first_line = original_caption.split('\n')[0] if original_caption else ""
@@ -36,11 +44,12 @@ async def forward_and_edit_caption(client, message):
         elif message.text:
             await client.send_message(DEST_CHANNEL, text=new_caption, parse_mode="Markdown")
         else:
-            print("Unsupported message type.")
+            print("Message type not handled:", message)
 
     except Exception as e:
-        print("Error:", e)
+        print("Error while forwarding message:", e)
 
+# اجرای سرور برای زنده نگه داشتن ربات
 from keep_alive import keep_alive
 keep_alive()
 
