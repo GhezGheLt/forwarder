@@ -24,21 +24,25 @@ def run_flask():
     serve(app, host="0.0.0.0", port=PORT)
 
 # تنظیمات ربات
-bot = Client(
-    "forward_bot",
-    api_id=int(os.getenv("API_ID")),
-    api_hash=os.getenv("API_HASH"),
-    bot_token=os.getenv("BOT_TOKEN"),
-    in_memory=True
-)
+try:
+    bot = Client(
+        "forward_bot",
+        api_id=int(os.getenv("API_ID")),
+        api_hash=os.getenv("API_HASH"),
+        bot_token=os.getenv("BOT_TOKEN"),
+        in_memory=True
+    )
+except Exception as e:
+    logger.error(f"خطا در راه‌اندازی ربات: {str(e)}")
+    exit(1)
 
 @bot.on_message(filters.chat(int(os.getenv("SOURCE_CHANNEL"))))
 async def forward_handler(client, message):
     try:
         await message.copy(int(os.getenv("DEST_CHANNEL")))
-        logger.info(f"پیام {message.id} فوروارد شد")
+        logger.info(f"پیام {message.id} با موفقیت ارسال شد")
     except Exception as e:
-        logger.error(f"خطا: {e}")
+        logger.error(f"خطا در ارسال پیام: {str(e)}")
 
 if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
