@@ -1,56 +1,47 @@
 from pyrogram import Client, filters
+from flask import Flask
 import os
-from dotenv import load_dotenv
+import threading
 
-# بارگذاری متغیرهای محیطی
-load_dotenv()
+# --- Flask for Render keep-alive ---
+app = Flask(__name__)
 
-api_id = int(os.getenv("API_ID"))
-api_hash = os.getenv("API_HASH")
-bot_token = os.getenv("BOT_TOKEN")
+@app.route('/')
+def index():
+    return "Bot is running!"
 
-SOURCE_CHANNEL = int(os.getenv("SOURCE_CHANNEL"))
-DEST_CHANNEL = int(os.getenv("DEST_CHANNEL"))
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
 
-# بررسی مقدار متغیرها
-print("SOURCE_CHANNEL =", SOURCE_CHANNEL)
-print("DEST_CHANNEL =", DEST_CHANNEL)
+threading.Thread(target=run_flask).start()
 
-app = Client("forward_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
+# --- Environment Variables ---
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-@app.on_message(filters.channel)
-async def forward_and_edit_caption(client, message):
-    if message.chat.id != SOURCE_CHANNEL:
-        return
+# --- Your Channel IDs ---
+SOURCE_CHANNEL = -1002650282186  # جایگزین با آیدی واقعی کانال مبدأ
+DEST_CHANNEL = -1002293369181    # جایگزین با آیدی واقعی کانال مقصد
 
-    print("Message received!")  # تست دریافت پیام
+# --- Pyrogram Bot ---
+bot = Client("forward_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
+@bot.on_message(filters.chat(SOURCE_CHANNEL))
+async def forward_or_copy(client, message):
+    print("Message received!")
     try:
-        original_caption = message.caption or ""
-        first_line = original_caption.split('\n')[0] if original_caption else ""
-
-        new_caption = (
-            f"{first_line}\n\n"
-            "enjoy hot webcams👙👇\n\n"
-            "[CamHot 🔥](https://t.me/+qY4VEKbgX0cxMmEy)"
-        )
-
-        if message.photo:
-            await client.send_photo(DEST_CHANNEL, photo=message.photo.file_id, caption=new_caption, parse_mode="markdown")
-        elif message.video:
-            await client.send_video(DEST_CHANNEL, video=message.video.file_id, caption=new_caption, parse_mode="markdown")
-        elif message.document:
-            await client.send_document(DEST_CHANNEL, document=message.document.file_id, caption=new_caption, parse_mode="markdown")
+        if message.forward_from_chat or message.forward_from:
+            await message.forward(DEST_CHANNEL)
         elif message.text:
-            await client.send_message(DEST_CHANNEL, text=new_caption, parse_mode="markdown")
+            await client.send_message(chat_id=DEST_CHANNEL, text=message.text)
+        elif message.photo:
+            await client.send_photo(chat_id=DEST_CHANNEL, photo=message.photo.file_id, caption=message.caption)
+        elif message.video:
+            await client.send_video(chat_id=DEST_CHANNEL, video=message.video.file_id, caption=message.caption)
         else:
-            print("Message type not handled:", message)
-
+            print("Unsupported message type.")
     except Exception as e:
-        print("Error while forwarding message:", e)
+        print(f"Error while forwarding message: {e}")
 
-# اجرای سرور برای زنده نگه داشتن ربات
-from keep_alive import keep_alive
-keep_alive()
-
-app.run()
+bot.run()
