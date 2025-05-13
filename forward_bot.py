@@ -61,7 +61,7 @@ async def handle_message(client, message):
     except Exception as e:
         logger.error(f"خطای بحرانی: {e}", exc_info=True)
 
-if name == "main":
+if __name__ == "__main__"::
     threading.Thread(target=run_server, daemon=True).start()
     logger.info("Starting bot...")
     bot.run()
