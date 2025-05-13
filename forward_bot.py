@@ -21,7 +21,7 @@ utils.get_peer_type = get_peer_type_new  # <-- جایگزینی تابع اصل�
 # === پایان Monkey Patch ===
 
 # بقیه کدهای شما (بدون تغییر)
-app = Flask(name)
+app = Flask(__name__)
 
 @app.route('/health')
 def health():
