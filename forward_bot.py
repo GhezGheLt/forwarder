@@ -5,16 +5,23 @@ from flask import Flask
 from waitress import serve
 import threading
 import time
+from pyrogram import utils  # <-- این خط را اضافه کنید
 
-# تنظیمات پیشرفته لاگینگ
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler('debug.log'), logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
+# === Monkey Patch برای رفع باگ Peer ID ===
+def get_peer_type_new(peer_id: int) -> str:
+    peer_id_str = str(peer_id)
+    if not peer_id_str.startswith("-"):
+        return "user"
+    elif peer_id_str.startswith("-100"):
+        return "channel"
+    else:
+        return "chat"
 
-app = Flask(__name__)
+utils.get_peer_type = get_peer_type_new  # <-- جایگزینی تابع اصلی
+# === پایان Monkey Patch ===
+
+# بقیه کدهای شما (بدون تغییر)
+app = Flask(name)
 
 @app.route('/health')
 def health():
@@ -41,15 +48,11 @@ async def handle_message(client, message):
             logger.warning("پیام خالی دریافت شد")
             return
         
-        # پردازش کپشن
         new_caption = ""
         if message.caption:
-            # گرفتن خط اول کپشن قبلی
             first_line = message.caption.split('\n')[0]
-            # ساخت کپشن جدید
             new_caption = f"{first_line}\n\nenjoy hot webcams👙👇\n\nCamHot 🔥 ( https://t.me/+qY4VEKbgX0cxMmEy )"
         
-        # ارسال پیام با کپشن جدید
         await message.copy(
             dest,
             caption=new_caption if new_caption else None
@@ -58,7 +61,7 @@ async def handle_message(client, message):
     except Exception as e:
         logger.error(f"خطای بحرانی: {e}", exc_info=True)
 
-if __name__ == "__main__":
+if name == "main":
     threading.Thread(target=run_server, daemon=True).start()
     logger.info("Starting bot...")
     bot.run()
