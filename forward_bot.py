@@ -70,7 +70,7 @@ try:
             new_caption = ""
             if message.caption:
                 first_line = message.caption.split('\n')[0]
-                new_caption = f"{first_line}\n\nenjoy hot webcams👙👇\n\nCamHot 🔥 ( https://t.me/+qY4VEKbgX0cxMmEy )"
+                new_caption = f"{first_line}\n\nenjoy hot webcams👙👇\n\nCamHot 🔥 ( @CamHotVIP )"
             
             await message.copy(
                 dest,
