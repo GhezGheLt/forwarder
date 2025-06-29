@@ -2,21 +2,13 @@ import os
 import logging
 import tempfile
 import subprocess
-import aiohttp
+import asyncio
 
-from pyrogram import Client, filters, utils
-from flask import Flask, jsonify
 from threading import Thread
+from flask import Flask, jsonify
+from pyrogram import Client, filters, idle
 
-# ——— Monkey-patch برای باگ Peer ID ———
-original = utils.get_peer_type
-def patched(peer):
-    if isinstance(peer, int):
-        return "user" if peer > 0 else "channel"
-    return original(peer)
-utils.get_peer_type = patched
-
-# ——— Logging ———
+# ——— تنظیمات و لاگ‌گیری ———
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -27,18 +19,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ——— Env vars ———
+# ——— متغیرهای محیطی ———
 API_ID         = int(os.getenv("API_ID"))
 API_HASH       = os.getenv("API_HASH")
 BOT_TOKEN      = os.getenv("BOT_TOKEN")
 SOURCE_CHANNEL = int(os.getenv("SOURCE_CHANNEL"))
 DEST_CHANNEL   = int(os.getenv("DEST_CHANNEL"))
 
+# ——— ساخت دو کلاینت Pyrogram: یکی برای Bot API، یکی برای MTProto User ———
 bot = Client(
     "forward_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
+)
+
+user = Client(
+    "user_session",
+    api_id=API_ID,
+    api_hash=API_HASH,
 )
 
 def is_video_message(msg) -> bool:
@@ -47,94 +46,91 @@ def is_video_message(msg) -> bool:
         (msg.document and msg.document.mime_type.startswith("video/"))
     )
 
-async def fetch_file_path(file_id: str) -> str | None:
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}"
-    async with aiohttp.ClientSession() as sess:
-        async with sess.get(url) as resp:
-            j = await resp.json()
-    if not j.get("ok"):
-        logger.error(f"getFile error: {j}")
-        return None
-    return j["result"]["file_path"]
-
 @bot.on_message(filters.chat(SOURCE_CHANNEL))
 async def handle_message(c: Client, m):
     dest = DEST_CHANNEL
-    # کپشن جدید
-    first = (m.caption or "").split("\n",1)[0]
-    new_cap = f"{first}\n\nenjoy hot webcams👙👇\n\nCamHot 🔥 ( @CamHotVIP )"
+    # تغییر کپشن به متن جدید
+    first_line = (m.caption or "").split("\n",1)[0]
+    new_cap = f"{first_line}\n\nenjoy hot webcams👙👇\n\nCamHot 🔥 ( @CamHotVIP )"
 
     if is_video_message(m):
-        logger.info(f"video msg_id={m.id}, building preview…")
+        logger.info(f"[{m.id}] 👉 ویدیو؛ ساخت پیش‌نمایش…")
         media = m.video or m.document
         file_id = media.file_id
 
-        # ۱) گرفتن file_path
-        fp = await fetch_file_path(file_id)
-        if not fp:
+        # ۱) گرفتن file_path با کلاینت User (MTProto)
+        try:
+            file = await user.get_file(file_id)
+            file_path = file.file_path
+        except Exception as e:
+            logger.error(f"خطا در get_file (MTProto): {e}")
+            # اگر نشد، فقط فوروارد عادی کن
             await m.copy(dest, caption=new_cap)
             return
 
-        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{fp}"
-        logger.info(f"direct URL: {file_url}")
+        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        logger.info(f"[{m.id}] URL مستقیم: {file_url}")
 
-        # ۲) دانلود بخش ابتدایی (برای جلوگیری از دانلود کامل)
-        partial = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-        part_path = partial.name
-        partial.close()
-
-        # این عدد را بسته به فرمت ویدیو دست‌کم ۲۰۰–۳۰۰ مگابایت انتخاب کنید
-        range_bytes = "0-300000000"
-        curl_cmd = [
-            "curl", "-s", "-L",
-            "-H", f"Range: bytes={range_bytes}",
-            file_url, "-o", part_path
-        ]
-        logger.info("curl cmd: " + " ".join(curl_cmd))
-        subprocess.run(curl_cmd, check=False)
-
-        # ۳) برش ۶۰ ثانیهٔ اول با FFmpeg
-        preview_path = part_path + ".preview.mp4"
+        # ۲) با ffmpeg فقط ۶۰ ثانیهٔ اول را برش بزن
+        preview_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
         ff_cmd = [
             "ffmpeg", "-y",
             "-ss", "0", "-t", "60",
-            "-i", part_path,
+            "-i", file_url,
             "-c", "copy",
             preview_path
         ]
-        logger.info("ffmpeg cmd: " + " ".join(ff_cmd))
+        logger.info(f"[{m.id}] اجرای ffmpeg: {' '.join(ff_cmd)}")
         proc = subprocess.run(ff_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if proc.returncode != 0:
-            logger.error("ffmpeg error: " + proc.stderr.decode(errors="ignore"))
+            err = proc.stderr.decode(errors="ignore")
+            logger.error(f"[{m.id}] خطای ffmpeg:\n{err}")
         else:
-            # ۴) ارسال پیش‌نمایش
+            # ۳) ارسال پیش‌نمایش
             await c.send_video(
                 chat_id=dest,
                 video=preview_path,
                 caption="📺 Preview (First minute)",
                 supports_streaming=True
             )
-            logger.info("preview sent")
+            logger.info(f"[{m.id}] پیش‌نمایش ارسال شد")
 
-        # ۵) پاک‌سازی موقت‌ها
-        for p in (part_path, preview_path):
-            try: os.remove(p)
-            except: pass
+        # پاک‌سازی فایل موقتی پیش‌نمایش
+        try:
+            os.remove(preview_path)
+        except OSError:
+            pass
 
-        # ۶) فوروارد کامل
+        # ۴) فوروارد ویدیو کامل
         await m.copy(dest, caption=new_cap)
-        logger.info("full video forwarded")
+        logger.info(f"[{m.id}] ویدیو کامل فوروارد شد")
 
     else:
+        # اگر پیام ویدیو نبود، مستقیم فوروارد کن
         await m.copy(dest, caption=new_cap)
-        logger.info(f"msg_id={m.id} forwarded")
+        logger.info(f"[{m.id}] پیام فوروارد شد")
 
-# Health check
+# ——— health-check HTTP ———
 app = Flask(__name__)
 @app.route("/healthz")
-def healthz(): return jsonify(status="ok")
-def run_healthz(): app.run(host="0.0.0.0", port=8080)
+def healthz():
+    return jsonify(status="ok")
+
+def run_healthz():
+    app.run(host="0.0.0.0", port=8080)
+
+async def main():
+    # ۱) راه‌اندازی Healthz در thread جدا
+    Thread(target=run_healthz, daemon=True).start()
+    # ۲) استارت کلاینت‌ها
+    await user.start()
+    await bot.start()
+    logger.info("🚀 ربات‌ها و کلاینت MTProto آماده شدند")
+    # ۳) نگه‌داری تا سیگنال توقف
+    await idle()
+    # ۴) هنگام توقف، کلاینت‌ها را ببند
+    await bot.stop()
+    await user.stop()
 
 if __name__ == "__main__":
-    Thread(target=run_healthz, daemon=True).start()
-    bot.run()
+    asyncio.run(main())
