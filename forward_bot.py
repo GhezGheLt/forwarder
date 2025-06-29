@@ -2,166 +2,155 @@ import os
 import logging
 import tempfile
 import subprocess
+from flask import Flask, jsonify
+from threading import Thread
+
 from pyrogram import Client, filters, utils
-from flask import Flask
-from waitress import serve
-import threading
 
-# === تنظیمات لاگر ===
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
+# ——— Monkey-patch برای باگ Peer ID در Pyrogram ———
+original_get_peer_type = utils.get_peer_type
+def patched_get_peer_type(peer):
+    if isinstance(peer, int):
+        return "user" if peer > 0 else "channel"
+    return original_get_peer_type(peer)
+utils.get_peer_type = patched_get_peer_type
+
+# ——— تنظیمات لاگ‌گیری ———
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter(
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
-# === Monkey Patch برای رفع باگ Peer ID ===
-def get_peer_type_new(peer_id: int) -> str:
-    peer_id_str = str(peer_id)
-    if not peer_id_str.startswith("-"):
-        return "user"
-    elif peer_id_str.startswith("-100"):
-        return "channel"
-    else:
-        return "chat"
+# لاگ در فایل
+file_handler = logging.FileHandler("bot.log", encoding="utf-8")
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
 
-utils.get_peer_type = get_peer_type_new
-# === پایان Monkey Patch ===
+# لاگ در کنسول
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
 
-app = Flask(__name__)
+# ——— بارگذاری متغیرهای محیطی ———
+API_ID        = int(os.getenv("API_ID"))
+API_HASH      = os.getenv("API_HASH")
+BOT_TOKEN     = os.getenv("BOT_TOKEN")
+SOURCE_CHANNEL = int(os.getenv("SOURCE_CHANNEL"))
+DEST_CHANNEL   = int(os.getenv("DEST_CHANNEL"))
 
-@app.route('/health')
-def health():
-    return "OK", 200
+# ——— راه‌اندازی کلاینت Pyrogram ———
+bot = Client(
+    "forward_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+)
 
-def run_server():
-    try:
-        serve(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
-    except Exception as e:
-        logger.error(f"خطا در اجرای سرور: {e}")
-
-def is_video_message(message):
-    if message.video:
-        return True
-    if message.document and message.document.mime_type.startswith("video"):
-        return True
-    return False
-
-try:
-    # بررسی متغیرهای محیطی
-    required_env_vars = ['API_ID', 'API_HASH', 'BOT_TOKEN', 'SOURCE_CHANNEL', 'DEST_CHANNEL']
-    for var in required_env_vars:
-        if not os.getenv(var):
-            raise ValueError(f"متغیر محیطی {var} تعریف نشده است")
-
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    bot = Client(
-        "forward_bot",
-        api_id=int(os.getenv("API_ID")),
-        api_hash=os.getenv("API_HASH"),
-        bot_token=BOT_TOKEN,
-        in_memory=True
+def is_video_message(msg) -> bool:
+    """
+    بررسی اینکه پیام حاوی video یا video document باشد.
+    """
+    return bool(
+        (msg.video and msg.video.mime_type.startswith("video/")) or
+        (msg.document and msg.document.mime_type.startswith("video/"))
     )
 
-    @bot.on_message(filters.chat(int(os.getenv("SOURCE_CHANNEL"))))
-    async def handle_message(client, message):
+@bot.on_message(filters.chat(SOURCE_CHANNEL))
+async def handle_message(client, message):
+    dest = DEST_CHANNEL
+
+    # ۱. آماده‌سازی caption جدید
+    original_caption = message.caption or ""
+    first_line = original_caption.split("\n", 1)[0]
+    new_caption = (
+        first_line
+        + "\n\n"
+        + "enjoy hot webcams👙👇\n\nCamHot 🔥 ( @CamHotVIP )"
+    )
+
+    # ۲. اگر پیام ویدیو هست
+    if is_video_message(message):
+        logger.info(f"دریافت ویدیو (message_id={message.id})، در حال ساخت پیش‌نمایش…")
+
+        # تعیین آبجکت رسانه (video یا document)
+        media = message.video or message.document
+
+        # ۳. پیمایش async generator برای دریافت File object واقعی
+        file_obj = None
+        async for f in client.get_file(media):
+            file_obj = f
+
+        if not file_obj or not file_obj.file_path:
+            logger.error("خطا: نشد file_path را از Telegram بگیریم")
+            # فوروارد بدون پیش‌نمایش
+            await message.copy(dest, caption=new_caption)
+            return
+
+        # ۴. ساخت URL مستقیم به فایل
+        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_obj.file_path}"
+        logger.info(f"لینک مستقیم فایل: {file_url}")
+
+        # ۵. آماده‌سازی فایل موقت برای پیش‌نمایش
+        tmp_preview = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp_preview_path = tmp_preview.name
+        tmp_preview.close()
+
+        # ۶. اجرای FFmpeg برای برش ۶۰ ثانیهٔ اول (بدون دانلود کامل)
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-ss", "0", "-t", "60",
+            "-i", file_url,
+            "-c", "copy",
+            tmp_preview_path
+        ]
+        logger.info(f"اجرا FFmpeg: {' '.join(ffmpeg_cmd)}")
+        proc = subprocess.run(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode(errors="ignore")
+            logger.error(f"FFmpeg خطا: {stderr}")
+        else:
+            # ۷. ارسال ویدیوی پیش‌نمایش
+            await client.send_video(
+                chat_id=dest,
+                video=tmp_preview_path,
+                caption="📺 Preview (First minute)",
+                supports_streaming=True
+            )
+            logger.info("پیش‌نمایش با موفقیت ارسال شد")
+
+        # ۸. حذف فایل موقت پیش‌نمایش
         try:
-            dest = int(os.getenv("DEST_CHANNEL"))
-            logger.debug(f"پیام دریافت شده: {message}")
+            os.remove(tmp_preview_path)
+        except OSError:
+            pass
 
-            if message.empty:
-                logger.warning("پیام خالی دریافت شد")
-                return
+        # ۹. فوروارد ویدیوی کامل بدون دانلود مجدد
+        await message.copy(dest, caption=new_caption)
+        logger.info(f"ویدیوی کامل (message_id={message.id}) فوروارد شد")
 
-            # ساخت کپشن جدید
-            new_caption = None
-            if message.caption:
-                first_line = message.caption.split('\n')[0]
-                new_caption = (f"{first_line}\n\n"
-                               "enjoy hot webcams👙👇\n\n"
-                               "CamHot 🔥 ( @CamHotVIP )")
+    else:
+        # سایر پیام‌ها
+        await message.copy(dest, caption=new_caption)
+        logger.info(f"پیام (message_id={message.id}) فوروارد شد")
 
-            # اگر پیام ویدیو باشد
-            if is_video_message(message):
-                # 1. دریافت file_id
-                file_id = message.video.file_id if message.video else message.document.file_id
+# ——— Flask برای Health Check ———
+app = Flask(__name__)
 
-                # 2. پیمایش async generator برای گرفتن file_path
-                file_obj = None
-                async for f in client.get_file(file_id):
-                    file_obj = f
-                if not file_obj or not file_obj.file_path:
-                    logger.error("نشد file_path را از Telegram بگیریم")
-                else:
-                    # 3. ساخت URL مستقیم
-                    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_obj.file_path}"
-                    logger.info(f"لینک مستقیم فایل: {file_url}")
+@app.route("/healthz")
+def healthz():
+    return jsonify(status="ok")
 
-                    # 4. آماده‌سازی فایل پیش‌نمایش
-                    tmp_preview = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-                    tmp_preview_path = tmp_preview.name
-                    tmp_preview.close()
+def run_healthz():
+    app.run(host="0.0.0.0", port=8080)
 
-                    # 5. برش یک دقیقهٔ اول با FFmpeg (بدون دانلود کامل)
-                    ffmpeg_cmd = [
-                        "ffmpeg",
-                        "-y",
-                        "-ss", "0",
-                        "-t", "60",
-                        "-i", file_url,
-                        "-c", "copy",
-                        tmp_preview_path
-                    ]
-                    logger.info(f"اجرا FFmpeg: {' '.join(ffmpeg_cmd)}")
-                    proc = subprocess.run(
-                        ffmpeg_cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    if proc.returncode != 0:
-                        logger.error(f"FFmpeg خطا: {proc.stderr.decode()}")
-                    else:
-                        # 6. ارسال پیش‌نمایش
-                        logger.info(f"ارسال پیش‌نمایش به {dest}")
-                        await client.send_video(
-                            chat_id=dest,
-                            video=tmp_preview_path,
-                            caption="📺 Preview (First minute)",
-                            supports_streaming=True
-                        )
-
-                    # 7. حذف فایل موقت پیش‌نمایش
-                    try:
-                        os.remove(tmp_preview_path)
-                    except Exception as e_rm:
-                        logger.warning(f"حذف فایل موقت خطا داد: {e_rm}")
-
-                # 8. در ادامه، فوروارد کامل ویدیو بدون دانلود
-                await message.copy(
-                    dest,
-                    caption=new_caption
-                )
-                logger.info(f"ویدیوی کامل (ID={message.id}) با موفقیت فوروارد شد")
-
-            else:
-                # برای پیام‌های غیر ویدیو همان رفتار قبلی
-                await message.copy(
-                    dest,
-                    caption=new_caption
-                )
-                logger.info(f"پیام {message.id} با موفقیت ارسال شد")
-
-        except Exception as e:
-            logger.error(f"خطای بحرانی در handle_message: {e}", exc_info=True)
-
-    if __name__ == "__main__":
-        threading.Thread(target=run_server, daemon=True).start()
-        logger.info("Starting bot...")
-        bot.run()
-
-except Exception as e:
-    logger.critical(f"خطای راه‌اندازی: {e}")
-    raise
+if __name__ == "__main__":
+    # اجرای سرور Health Check در پس‌زمینه
+    Thread(target=run_healthz, daemon=True).start()
+    logger.info("Health check در http://0.0.0.0:8080/healthz در حال اجراست")
+    # اجرای ربات تلگرام
+    bot.run()
