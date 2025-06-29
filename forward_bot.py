@@ -80,51 +80,66 @@ try:
             new_caption = None
             if message.caption:
                 first_line = message.caption.split('\n')[0]
-                new_caption = f"{first_line}\n\nenjoy hot webcams👙👇\n\nCamHot 🔥 ( @CamHotVIP )"
+                new_caption = (f"{first_line}\n\n"
+                               "enjoy hot webcams👙👇\n\n"
+                               "CamHot 🔥 ( @CamHotVIP )")
 
             # اگر پیام ویدیو باشد
             if is_video_message(message):
-                # 1. گرفتن مسیر فایل روی سرور Telegram
-                file_obj = await client.get_file(message.video.file_id if message.video else message.document.file_id)
-                file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_obj.file_path}"
-                logger.info(f"لینک مستقیم فایل: {file_url}")
+                # 1. دریافت file_id
+                file_id = message.video.file_id if message.video else message.document.file_id
 
-                # 2. آماده‌سازی فایل پیش‌نمایش
-                tmp_preview = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-                tmp_preview_path = tmp_preview.name
-                tmp_preview.close()
-
-                # 3. برش یک دقیقهٔ اول با FFmpeg (بدون دانلود کامل)
-                ffmpeg_cmd = [
-                    "ffmpeg",
-                    "-y",
-                    "-ss", "0",
-                    "-t", "60",
-                    "-i", file_url,
-                    "-c", "copy",
-                    tmp_preview_path
-                ]
-                logger.info(f"اجرا FFmpeg: {' '.join(ffmpeg_cmd)}")
-                proc = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if proc.returncode != 0:
-                    logger.error(f"FFmpeg خطا: {proc.stderr.decode()}")
+                # 2. پیمایش async generator برای گرفتن file_path
+                file_obj = None
+                async for f in client.get_file(file_id):
+                    file_obj = f
+                if not file_obj or not file_obj.file_path:
+                    logger.error("نشد file_path را از Telegram بگیریم")
                 else:
-                    # 4. ارسال پیش‌نمایش
-                    logger.info(f"ارسال پیش‌نمایش به {dest}")
-                    await client.send_video(
-                        chat_id=dest,
-                        video=tmp_preview_path,
-                        caption="📺 Preview (First minute)",
-                        supports_streaming=True
+                    # 3. ساخت URL مستقیم
+                    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_obj.file_path}"
+                    logger.info(f"لینک مستقیم فایل: {file_url}")
+
+                    # 4. آماده‌سازی فایل پیش‌نمایش
+                    tmp_preview = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+                    tmp_preview_path = tmp_preview.name
+                    tmp_preview.close()
+
+                    # 5. برش یک دقیقهٔ اول با FFmpeg (بدون دانلود کامل)
+                    ffmpeg_cmd = [
+                        "ffmpeg",
+                        "-y",
+                        "-ss", "0",
+                        "-t", "60",
+                        "-i", file_url,
+                        "-c", "copy",
+                        tmp_preview_path
+                    ]
+                    logger.info(f"اجرا FFmpeg: {' '.join(ffmpeg_cmd)}")
+                    proc = subprocess.run(
+                        ffmpeg_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
                     )
+                    if proc.returncode != 0:
+                        logger.error(f"FFmpeg خطا: {proc.stderr.decode()}")
+                    else:
+                        # 6. ارسال پیش‌نمایش
+                        logger.info(f"ارسال پیش‌نمایش به {dest}")
+                        await client.send_video(
+                            chat_id=dest,
+                            video=tmp_preview_path,
+                            caption="📺 Preview (First minute)",
+                            supports_streaming=True
+                        )
 
-                # حذف فایل موقت پیش‌نمایش
-                try:
-                    os.remove(tmp_preview_path)
-                except Exception as e_rm:
-                    logger.warning(f"حذف فایل موقت خطا داد: {e_rm}")
+                    # 7. حذف فایل موقت پیش‌نمایش
+                    try:
+                        os.remove(tmp_preview_path)
+                    except Exception as e_rm:
+                        logger.warning(f"حذف فایل موقت خطا داد: {e_rm}")
 
-                # 5. فوروارد کامل ویدیو (بدون دانلود، با متد copy)
+                # 8. در ادامه، فوروارد کامل ویدیو بدون دانلود
                 await message.copy(
                     dest,
                     caption=new_caption
