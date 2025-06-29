@@ -48,78 +48,71 @@ def run_server():
     except Exception as e:
         logger.error(f"خطا در اجرای سرور: {e}")
 
-async def extract_thumbnail(video_path: str, output_path: str) -> bool:
-    """استخراج تامبنیل از ویدیو با ffmpeg"""
+async def generate_video_preview(video_path: str, output_path: str) -> bool:
+    """ایجاد پیش‌نمایش ویدیو بدون استفاده از تامبنیل پیش‌فرض"""
     try:
-        cmd = [
-            "ffmpeg", "-y",
-            "-ss", "00:00:01",
-            "-i", video_path,
-            "-frames:v", "1",
-            "-q:v", "2",
-            "-vf", "scale=640:-1",
-            output_path
-        ]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        _, stderr = await proc.communicate()
+        # 1. استخراج یک فریم از ثانیه 1
+        # 2. ایجاد یک ویدیوی کوتاه 3 ثانیه‌ای با کیفیت پایین
+        temp_frame = os.path.join(tempfile.mkdtemp(), "frame.jpg")
         
-        if proc.returncode != 0:
-            logger.error(f"خطا در ffmpeg: {stderr.decode()}")
-            return False
+        commands = [
+            # استخراج یک فریم
+            ["ffmpeg", "-y", "-ss", "00:00:01", "-i", video_path, 
+             "-frames:v", "1", "-q:v", "2", temp_frame],
+            
+            # ایجاد ویدیوی پیش‌نمایش کوتاه
+            ["ffmpeg", "-y", "-ss", "00:00:00", "-i", video_path,
+             "-t", "3", "-vf", "scale=640:-2", "-c:v", "libx264",
+             "-preset", "veryfast", "-crf", "28", output_path]
+        ]
+        
+        for cmd in commands:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            _, stderr = await proc.communicate()
+            
+            if proc.returncode != 0:
+                logger.error(f"خطا در ffmpeg: {stderr.decode()}")
+                return False
+        
         return True
     except Exception as e:
-        logger.error(f"خطا در استخراج تامبنیل: {e}")
+        logger.error(f"خطا در ایجاد پیش‌نمایش: {e}")
         return False
+    finally:
+        if os.path.exists(temp_frame):
+            os.remove(temp_frame)
 
 async def process_large_video(client: Client, message: Message, dest: int, new_caption: Optional[str]):
-    """پردازش ویدیوهای بزرگ بدون دانلود کامل"""
+    """پردازش ویدیوهای بزرگ با ایجاد پیش‌نمایش سفارشی"""
     try:
-        temp_dir = tempfile.mkdtemp(prefix="videothumb_")
-        thumb_path = os.path.join(temp_dir, "thumbnail.jpg")
+        temp_dir = tempfile.mkdtemp(prefix="videopreview_")
+        preview_path = os.path.join(temp_dir, "preview.mp4")
         
-        # اگر ویدیو تامبنیل دارد، از آن استفاده می‌کنیم
-        if message.video.thumbs:
-            thumb = message.video.thumbs[0]
-            thumb_file_id = thumb.file_id
-            
-            # دانلود تامبنیل
-            thumb_path = await client.download_media(
-                thumb_file_id,
-                file_name=thumb_path
+        # دانلود بخش کوچکی از ویدیو (5MB اول)
+        partial_path = os.path.join(temp_dir, "partial.mp4")
+        try:
+            await client.download_media(
+                message.video.file_id,
+                file_name=partial_path,
+                progress=lambda c, t: c > 5*1024*1024 and 1/0  # قطع بعد از 5MB
             )
-            
-            if thumb_path and os.path.exists(thumb_path):
-                await client.send_photo(
+        except:
+            pass
+        
+        if os.path.exists(partial_path):
+            # ایجاد پیش‌نمایش
+            if await generate_video_preview(partial_path, preview_path):
+                # ارسال پیش‌نمایش
+                await client.send_video(
                     chat_id=dest,
-                    photo=thumb_path,
-                    caption="Preview of the video"
+                    video=preview_path,
+                    caption="Video Preview (3s)",
+                    duration=3
                 )
-        else:
-            # اگر تامبنیل وجود ندارد، یک فریم تصادفی از ویدیو استخراج می‌کنیم
-            # با استفاده از Pyrogram بدون دانلود کامل ویدیو
-            video_path = os.path.join(temp_dir, "temp_video.mp4")
-            
-            # دانلود بخش کوچکی از ویدیو برای استخراج تامبنیل
-            try:
-                await client.download_media(
-                    message.video.file_id,
-                    file_name=video_path,
-                    progress=lambda c, t: c > 5*1024*1024 and 1/0  # بعد از 5MB قطع می‌کند
-                )
-            except:
-                pass
-            
-            if os.path.exists(video_path):
-                if await extract_thumbnail(video_path, thumb_path):
-                    await client.send_photo(
-                        chat_id=dest,
-                        photo=thumb_path,
-                        caption="Video preview"
-                    )
     except Exception as e:
         logger.error(f"خطا در پردازش ویدیوی بزرگ: {e}")
     finally:
@@ -166,22 +159,24 @@ try:
                 file_size_mb = message.video.file_size / (1024 * 1024)
                 logger.info(f"ویدیو تشخیص داده شد - سایز: {file_size_mb:.2f}MB")
                 
-                if file_size_mb > 100:  # برای ویدیوهای خیلی بزرگ
+                if file_size_mb > 100:  # برای ویدیوهای بزرگ
                     await process_large_video(client, message, dest, new_caption)
                 else:
-                    # برای ویدیوهای کوچک از روش قبلی استفاده می‌کنیم
-                    temp_dir = tempfile.mkdtemp(prefix="vidshot_")
+                    # برای ویدیوهای کوچک
+                    temp_dir = tempfile.mkdtemp(prefix="vidpreview_")
                     try:
                         video_path = await client.download_media(
                             message.video.file_id,
                             file_name=os.path.join(temp_dir, "video.mp4")
                         )
                         if video_path:
-                            thumb_path = os.path.join(temp_dir, "thumbnail.jpg")
-                            if await extract_thumbnail(video_path, thumb_path):
-                                await client.send_photo(
+                            preview_path = os.path.join(temp_dir, "preview.mp4")
+                            if await generate_video_preview(video_path, preview_path):
+                                await client.send_video(
                                     chat_id=dest,
-                                    photo=thumb_path
+                                    video=preview_path,
+                                    caption="Video Preview",
+                                    duration=3
                                 )
                     except Exception as e:
                         logger.error(f"خطا در پردازش ویدیو: {e}")
